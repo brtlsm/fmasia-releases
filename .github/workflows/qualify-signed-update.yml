@@ -66,7 +66,7 @@ jobs:
           Expand-Archive target-clean-qualification.zip -DestinationPath target-clean-qualification
           Expand-Archive qualification-harness.zip -DestinationPath qualification-harness
 
-      - name: Verify draft bundle identity and install harness dependency
+      - name: Verify draft bundle identity
         shell: pwsh
         run: |
           $manifest = Get-Content -Raw target-candidate/candidate-manifest.json | ConvertFrom-Json
@@ -79,13 +79,6 @@ jobs:
           $nsis = @($manifest.artifacts | Where-Object kind -eq 'nsis-installer')[0]
           $actual = (Get-FileHash -Algorithm SHA256 (Join-Path target-candidate "artifacts/$($nsis.fileName)")).Hash.ToLowerInvariant()
           if ($actual -ne $nsis.sha256) { throw 'Target NSIS artifact differs from its manifest.' }
-          Push-Location qualification-harness
-          try {
-            npm install --ignore-scripts --no-audit --no-fund
-            if ($LASTEXITCODE -ne 0) { throw 'Harness dependency installation failed.' }
-          } finally {
-            Pop-Location
-          }
 
       - name: Exercise ${{ matrix.scenario }} through the installed production app
         shell: pwsh
