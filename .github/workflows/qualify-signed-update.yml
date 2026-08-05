@@ -1,0 +1,99 @@
+name: Qualify FMasia signed update
+
+on:
+  workflow_dispatch:
+    inputs:
+      qualification_release_tag:
+        description: Temporary draft release containing the sealed target and harness bundles
+        required: true
+        type: string
+      candidate_id:
+        description: Exact target candidate identity
+        required: true
+        type: string
+      previous_release_tag:
+        description: Immutable public version-N release
+        required: true
+        default: v0.1.0
+        type: string
+
+concurrency:
+  group: qualify-${{ inputs.candidate_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  scenario:
+    name: ${{ matrix.scenario }} on fresh Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - endpointUnavailable
+          - invalidSignature
+          - interruptedDownload
+          - validUpdate
+    env:
+      FMASIA_SIGNED_UPDATE_ACCEPTANCE: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22.23.0
+
+      - name: Download the private draft qualification bundles
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download '${{ inputs.qualification_release_tag }}' --repo '${{ github.repository }}' `
+            --pattern target-candidate.zip `
+            --pattern target-clean-qualification.zip `
+            --pattern qualification-harness.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Qualification bundle download failed.' }
+          Expand-Archive target-candidate.zip -DestinationPath target-candidate
+          Expand-Archive target-clean-qualification.zip -DestinationPath target-clean-qualification
+          Expand-Archive qualification-harness.zip -DestinationPath qualification-harness
+
+      - name: Verify draft bundle identity and install harness dependency
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -Raw target-candidate/candidate-manifest.json | ConvertFrom-Json
+          $qualification = Get-Content -Raw target-clean-qualification/clean-machine-install-qualification.json | ConvertFrom-Json
+          if ($manifest.candidateId -ne '${{ inputs.candidate_id }}' `
+              -or $qualification.candidateId -ne $manifest.candidateId `
+              -or $qualification.status -ne 'passed') {
+            throw 'Draft qualification bundles are not bound to the requested candidate.'
+          }
+          $nsis = @($manifest.artifacts | Where-Object kind -eq 'nsis-installer')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 (Join-Path target-candidate "artifacts/$($nsis.fileName)")).Hash.ToLowerInvariant()
+          if ($actual -ne $nsis.sha256) { throw 'Target NSIS artifact differs from its manifest.' }
+          npm install --prefix qualification-harness --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Harness dependency installation failed.' }
+
+      - name: Exercise ${{ matrix.scenario }} through the installed production app
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Push-Location qualification-harness
+          try {
+            & ./Run-QualificationScenario.ps1 `
+              -CandidateRoot (Resolve-Path ../target-candidate).Path `
+              -CleanQualificationRoot (Resolve-Path ../target-clean-qualification).Path `
+              -Scenario '${{ matrix.scenario }}' `
+              -PreviousReleaseTag '${{ inputs.previous_release_tag }}' `
+              -ReleaseRepository '${{ github.repository }}' `
+              -EvidenceOut (Join-Path (Resolve-Path ..).Path 'signed-update-${{ matrix.scenario }}.json')
+          } finally { Pop-Location }
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: signed-update-${{ matrix.scenario }}
+          path: signed-update-${{ matrix.scenario }}.json
+          if-no-files-found: error
+          retention-days: 30
