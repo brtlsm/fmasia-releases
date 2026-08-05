@@ -40,10 +40,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download '${{ inputs.qualification_release_tag }}' --repo '${{ github.repository }}' `
-            --pattern target-candidate.zip `
-            --pattern qualification-harness.zip
-          if ($LASTEXITCODE -ne 0) { throw 'Qualification bundle download failed.' }
+          $releases = gh api 'repos/${{ github.repository }}/releases?per_page=100' | ConvertFrom-Json
+          $release = @($releases | Where-Object { $_.draft -and $_.tag_name -eq '${{ inputs.qualification_release_tag }}' })
+          if ($release.Count -ne 1) { throw 'Exact draft qualification release was not found.' }
+          foreach ($name in @('target-candidate.zip', 'qualification-harness.zip')) {
+            $asset = @($release[0].assets | Where-Object name -eq $name)
+            if ($asset.Count -ne 1) { throw "Draft release lacks exact asset $name." }
+            Invoke-WebRequest -Uri $asset[0].url -Headers @{
+              Authorization = "Bearer $env:GH_TOKEN"
+              Accept = 'application/octet-stream'
+              'X-GitHub-Api-Version' = '2022-11-28'
+            } -OutFile $name
+          }
           Expand-Archive target-candidate.zip -DestinationPath target-candidate
           Expand-Archive qualification-harness.zip -DestinationPath qualification-harness
       - name: Verify exact candidate
@@ -88,9 +96,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download '${{ inputs.qualification_release_tag }}' --repo '${{ github.repository }}' `
-            --pattern target-candidate.zip `
-            --pattern qualification-harness.zip
+          $releases = gh api 'repos/${{ github.repository }}/releases?per_page=100' | ConvertFrom-Json
+          $release = @($releases | Where-Object { $_.draft -and $_.tag_name -eq '${{ inputs.qualification_release_tag }}' })
+          if ($release.Count -ne 1) { throw 'Exact draft qualification release was not found.' }
+          foreach ($name in @('target-candidate.zip', 'qualification-harness.zip')) {
+            $asset = @($release[0].assets | Where-Object name -eq $name)
+            if ($asset.Count -ne 1) { throw "Draft release lacks exact asset $name." }
+            Invoke-WebRequest -Uri $asset[0].url -Headers @{
+              Authorization = "Bearer $env:GH_TOKEN"
+              Accept = 'application/octet-stream'
+              'X-GitHub-Api-Version' = '2022-11-28'
+            } -OutFile $name
+          }
           Expand-Archive target-candidate.zip -DestinationPath target-candidate
           Expand-Archive qualification-harness.zip -DestinationPath qualification-harness
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
