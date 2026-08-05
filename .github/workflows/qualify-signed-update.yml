@@ -79,7 +79,7 @@ jobs:
           $nsis = @($manifest.artifacts | Where-Object kind -eq 'nsis-installer')[0]
           $actual = (Get-FileHash -Algorithm SHA256 (Join-Path target-candidate "artifacts/$($nsis.fileName)")).Hash.ToLowerInvariant()
           if ($actual -ne $nsis.sha256) { throw 'Target NSIS artifact differs from its manifest.' }
-          npm install --prefix qualification-harness --ignore-scripts --no-audit --no-fund
+          npm --prefix qualification-harness install --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { throw 'Harness dependency installation failed.' }
 
       - name: Exercise ${{ matrix.scenario }} through the installed production app
